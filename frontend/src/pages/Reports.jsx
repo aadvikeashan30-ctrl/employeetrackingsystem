@@ -8,15 +8,12 @@ function Reports() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [loading, setLoading] = useState(true);
-
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
   const fetchData = async () => {
     try {
       setLoading(true);
-      const res = view === 'weekly'
-        ? await getWeeklySummary()
-        : await getMonthlySummary(selectedYear, selectedMonth);
+      const res = view === 'weekly' ? await getWeeklySummary() : await getMonthlySummary(selectedYear, selectedMonth);
       setData(res.data.summary);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -29,158 +26,108 @@ function Reports() {
   const avgDays = data.length > 0 ? (data.reduce((s, d) => s + d.days_present, 0) / data.length).toFixed(1) : '0';
   const avgHours = data.length > 0 ? (totalHours / data.length).toFixed(1) : '0';
 
-
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      <div className="flex items-center justify-center h-[60vh]">
+        <div className="w-16 h-16 rounded-full border-2 border-transparent border-t-indigo-500 animate-spin"></div>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-3xl font-bold text-gray-900">Reports & Analytics</h2>
-          <p className="text-gray-500 mt-1">Working hours breakdown and productivity insights</p>
+          <h2 className="text-2xl font-bold text-white">Reports</h2>
+          <p className="text-gray-500 text-sm mt-0.5">Hours and analytics</p>
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex bg-gray-100 rounded-xl p-1">
-          <button onClick={() => setView('weekly')}
-            className={`px-5 py-2.5 text-sm font-semibold rounded-lg transition-all ${view === 'weekly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
-            This Week
-          </button>
-          <button onClick={() => setView('monthly')}
-            className={`px-5 py-2.5 text-sm font-semibold rounded-lg transition-all ${view === 'monthly' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
-            Monthly
-          </button>
+      <div className="glass rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex bg-white/5 rounded-xl p-1">
+          <button onClick={() => setView('weekly')} className={`px-5 py-2 text-sm font-semibold rounded-lg transition-all ${view === 'weekly' ? 'bg-indigo-500/20 text-indigo-400' : 'text-gray-500 hover:text-white'}`}>Week</button>
+          <button onClick={() => setView('monthly')} className={`px-5 py-2 text-sm font-semibold rounded-lg transition-all ${view === 'monthly' ? 'bg-indigo-500/20 text-indigo-400' : 'text-gray-500 hover:text-white'}`}>Month</button>
         </div>
         {view === 'monthly' && (
           <div className="flex items-center space-x-2">
-            <select value={selectedMonth} onChange={(e) => setSelectedMonth(Number(e.target.value))}
-              className="px-3 py-2 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-indigo-500">
-              {months.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
+              {months.map((m, i) => <option key={i} value={i + 1} className="bg-[#1a1a3e]">{m}</option>)}
             </select>
-            <select value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}
-              className="px-3 py-2 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-indigo-500">
-              {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
+            <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
+              {[2024, 2025, 2026].map(y => <option key={y} value={y} className="bg-[#1a1a3e]">{y}</option>)}
             </select>
           </div>
         )}
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-2xl p-5 text-white">
-          <TrendingUp className="h-6 w-6 mb-2 opacity-80" />
-          <p className="text-3xl font-bold">{totalHours.toFixed(1)}h</p>
-          <p className="text-xs opacity-80 mt-1">Total Hours</p>
-        </div>
-        <div className="bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-2xl p-5 text-white">
-          <Calendar className="h-6 w-6 mb-2 opacity-80" />
-          <p className="text-3xl font-bold">{avgDays}</p>
-          <p className="text-xs opacity-80 mt-1">Avg Days Present</p>
-        </div>
-        <div className="bg-gradient-to-br from-violet-500 to-violet-700 rounded-2xl p-5 text-white">
-          <Clock className="h-6 w-6 mb-2 opacity-80" />
-          <p className="text-3xl font-bold">{avgHours}h</p>
-          <p className="text-xs opacity-80 mt-1">Avg Hours/Person</p>
-        </div>
-        <div className="bg-gradient-to-br from-amber-500 to-amber-700 rounded-2xl p-5 text-white">
-          <Users className="h-6 w-6 mb-2 opacity-80" />
-          <p className="text-3xl font-bold">{data.length}</p>
-          <p className="text-xs opacity-80 mt-1">Team Members</p>
-        </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="stat-card glass"><TrendingUp className="h-5 w-5 text-indigo-400 mb-3" /><p className="text-2xl font-bold text-white">{totalHours.toFixed(1)}<span className="text-sm text-gray-500 ml-1">h</span></p><p className="text-[11px] text-gray-500 mt-1">Total Hours</p></div>
+        <div className="stat-card glass"><Calendar className="h-5 w-5 text-emerald-400 mb-3" /><p className="text-2xl font-bold text-white">{avgDays}</p><p className="text-[11px] text-gray-500 mt-1">Avg Days</p></div>
+        <div className="stat-card glass"><Clock className="h-5 w-5 text-violet-400 mb-3" /><p className="text-2xl font-bold text-white">{avgHours}<span className="text-sm text-gray-500 ml-1">h</span></p><p className="text-[11px] text-gray-500 mt-1">Avg/Person</p></div>
+        <div className="stat-card glass"><Users className="h-5 w-5 text-amber-400 mb-3" /><p className="text-2xl font-bold text-white">{data.length}</p><p className="text-[11px] text-gray-500 mt-1">Team</p></div>
       </div>
 
-
-      {/* Bar Chart */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+      <div className="glass rounded-2xl p-6">
         <div className="flex items-center space-x-3 mb-6">
-          <div className="p-2 bg-indigo-100 rounded-lg">
-            <BarChart3 className="h-5 w-5 text-indigo-600" />
-          </div>
-          <h3 className="font-bold text-gray-900">Hours by Employee</h3>
+          <BarChart3 className="h-5 w-5 text-indigo-400" />
+          <h3 className="font-bold text-white text-sm">Hours by Employee</h3>
         </div>
-
         {data.length > 0 ? (
           <div className="space-y-3">
             {data.map((emp, idx) => (
               <div key={emp.employee_id} className="flex items-center space-x-4">
-                <div className="w-28 text-sm font-medium text-gray-700 truncate flex-shrink-0">
-                  {emp.name}
-                </div>
-                <div className="flex-1 bg-gray-100 rounded-full h-8 overflow-hidden">
+                <div className="w-24 text-xs font-medium text-gray-400 truncate flex-shrink-0">{emp.name}</div>
+                <div className="flex-1 bg-white/5 rounded-full h-7 overflow-hidden">
                   <div
-                    className={`h-full rounded-full flex items-center justify-end pr-3 transition-all duration-700 ${
-                      idx === 0 ? 'bg-gradient-to-r from-indigo-500 to-indigo-600' :
-                      idx === 1 ? 'bg-gradient-to-r from-violet-500 to-violet-600' :
-                      idx === 2 ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' :
-                      'bg-gradient-to-r from-gray-400 to-gray-500'
-                    }`}
+                    className={`h-full rounded-full flex items-center justify-end pr-3 transition-all duration-700 ${idx === 0 ? 'bg-gradient-to-r from-indigo-600 to-violet-600' : idx === 1 ? 'bg-gradient-to-r from-emerald-600 to-teal-600' : idx === 2 ? 'bg-gradient-to-r from-amber-600 to-orange-600' : 'bg-gradient-to-r from-gray-600 to-gray-700'}`}
                     style={{ width: `${Math.max((emp.total_hours / maxHours) * 100, 5)}%` }}
                   >
-                    <span className="text-xs font-bold text-white">{emp.total_hours}h</span>
+                    <span className="text-[11px] font-bold text-white">{emp.total_hours}h</span>
                   </div>
                 </div>
-                <div className="w-16 text-right text-xs text-gray-500 flex-shrink-0">
-                  {emp.days_present}d
-                </div>
+                <span className="text-xs text-gray-600 w-10 text-right">{emp.days_present}d</span>
               </div>
             ))}
           </div>
         ) : (
-          <div className="py-16 text-center">
-            <BarChart3 className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500 font-medium">No data for this period</p>
+          <div className="py-12 text-center">
+            <BarChart3 className="h-8 w-8 text-gray-700 mx-auto mb-2" />
+            <p className="text-gray-500 text-sm">No data for this period</p>
           </div>
         )}
       </div>
 
-      {/* Detailed Table */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100 flex items-center space-x-3">
-          <Award className="h-5 w-5 text-amber-500" />
-          <h3 className="font-bold text-gray-900">Detailed Breakdown</h3>
+      <div className="glass rounded-2xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-white/5 flex items-center space-x-3">
+          <Award className="h-4 w-4 text-amber-400" />
+          <h3 className="font-bold text-white text-sm">Rankings</h3>
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full">
-            <thead className="bg-gray-50/50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">#</th>
-                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Employee</th>
-                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Department</th>
-                <th className="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Days</th>
-                <th className="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Total Hours</th>
-                <th className="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Avg/Day</th>
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-white/5">
+              <th className="px-6 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">#</th>
+              <th className="px-6 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Employee</th>
+              <th className="px-6 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Dept</th>
+              <th className="px-6 py-3 text-center text-[11px] font-semibold text-gray-500 uppercase">Days</th>
+              <th className="px-6 py-3 text-center text-[11px] font-semibold text-gray-500 uppercase">Total</th>
+              <th className="px-6 py-3 text-center text-[11px] font-semibold text-gray-500 uppercase">Avg</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((emp, idx) => (
+              <tr key={emp.employee_id} className="table-row">
+                <td className="px-6 py-3">
+                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-lg text-[11px] font-bold ${idx === 0 ? 'bg-amber-500/20 text-amber-400' : idx === 1 ? 'bg-gray-500/20 text-gray-400' : idx === 2 ? 'bg-orange-500/20 text-orange-400' : 'bg-white/5 text-gray-600'}`}>{idx + 1}</span>
+                </td>
+                <td className="px-6 py-3 text-sm font-semibold text-white">{emp.name}</td>
+                <td className="px-6 py-3 text-sm text-gray-500">{emp.department || '—'}</td>
+                <td className="px-6 py-3 text-center text-sm font-bold text-gray-300">{emp.days_present}</td>
+                <td className="px-6 py-3 text-center text-sm font-bold text-indigo-400">{emp.total_hours}h</td>
+                <td className="px-6 py-3 text-center text-sm text-gray-500">{emp.avg_hours_per_day}h</td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {data.map((emp, idx) => (
-                <tr key={emp.employee_id} className="hover:bg-gray-50/50">
-                  <td className="px-6 py-3.5">
-                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
-                      idx === 0 ? 'bg-amber-100 text-amber-700' :
-                      idx === 1 ? 'bg-gray-200 text-gray-600' :
-                      idx === 2 ? 'bg-orange-100 text-orange-600' :
-                      'bg-gray-50 text-gray-400'
-                    }`}>{idx + 1}</span>
-                  </td>
-                  <td className="px-6 py-3.5 font-semibold text-gray-900 text-sm">{emp.name}</td>
-                  <td className="px-6 py-3.5 text-sm text-gray-500">{emp.department || '—'}</td>
-                  <td className="px-6 py-3.5 text-center font-bold text-gray-700">{emp.days_present}</td>
-                  <td className="px-6 py-3.5 text-center font-bold text-indigo-600">{emp.total_hours}h</td>
-                  <td className="px-6 py-3.5 text-center text-sm text-gray-600">{emp.avg_hours_per_day}h</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
