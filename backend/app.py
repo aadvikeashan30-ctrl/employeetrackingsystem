@@ -170,14 +170,14 @@ def modify_employee(employee_id):
 
 @app.route("/api/employees/<int:employee_id>", methods=["DELETE"])
 def remove_employee(employee_id):
-    """Remove employee from tracking (soft delete - history preserved)."""
+    """Permanently delete employee and all their attendance data."""
     emp = get_employee_by_id(employee_id)
     if not emp:
         return jsonify({"error": "Employee not found"}), 404
 
     delete_employee(employee_id)
-    logger.info(f"Employee removed: {emp['name']} (ID: {employee_id})")
-    return jsonify({"message": f"Employee '{emp['name']}' removed from tracking"})
+    logger.info(f"Employee deleted: {emp['name']} (ID: {employee_id})")
+    return jsonify({"message": f"Employee '{emp['name']}' and their data permanently deleted"})
 
 
 # ==================== Live Attendance ====================

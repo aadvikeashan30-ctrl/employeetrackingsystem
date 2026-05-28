@@ -85,18 +85,39 @@ def init_db():
 
 def add_employee(name, mac_address, email=None, department=None, device_name=None):
     """Register a new employee with their device MAC address."""
+    mac_clean = mac_address.strip().lower()
     with get_connection() as conn:
-        try:
-            cursor = conn.execute(
-                """INSERT INTO employees (name, mac_address, email, department, device_name)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (name.strip(), mac_address.strip().lower(), email, department, device_name)
-            )
-            logger.info(f"Employee registered: {name} (MAC: {mac_address})")
-            return cursor.lastrowid
-        except sqlite3.IntegrityError:
-            logger.warning(f"MAC address already registered: {mac_address}")
-            return None
+        # Check if MAC exists (including inactive/deleted employees)
+        existing = conn.execute(
+            "SELECT id, is_active FROM employees WHERE mac_address = ?",
+            (mac_clean,)
+        ).fetchone()
+
+        if existing:
+            if existing['is_active'] == 0:
+                # Re-activate previously deleted employee with new details
+                conn.execute(
+                    """UPDATE employees
+                       SET name = ?, email = ?, department = ?, device_name = ?,
+                           is_active = 1, updated_at = datetime('now', 'localtime')
+                       WHERE id = ?""",
+                    (name.strip(), email, department, device_name, existing['id'])
+                )
+                logger.info(f"Employee re-registered: {name} (MAC: {mac_clean})")
+                return existing['id']
+            else:
+                # MAC is already registered to an active employee
+                logger.warning(f"MAC address already in use by active employee: {mac_clean}")
+                return None
+
+        # New registration
+        cursor = conn.execute(
+            """INSERT INTO employees (name, mac_address, email, department, device_name)
+               VALUES (?, ?, ?, ?, ?)""",
+            (name.strip(), mac_clean, email, department, device_name)
+        )
+        logger.info(f"Employee registered: {name} (MAC: {mac_clean})")
+        return cursor.lastrowid
 
 
 def get_all_employees():
@@ -151,13 +172,22 @@ def update_employee(employee_id, **kwargs):
 
 
 def delete_employee(employee_id):
-    """Soft-delete employee (deactivate). Attendance history preserved."""
+    """
+    Permanently delete employee and their attendance records.
+    This allows the same MAC address to be re-registered later.
+    """
     with get_connection() as conn:
+        # Delete attendance logs for this employee
         conn.execute(
-            "UPDATE employees SET is_active = 0, updated_at = datetime('now', 'localtime') WHERE id = ?",
+            "DELETE FROM attendance_logs WHERE employee_id = ?",
             (employee_id,)
         )
-    logger.info(f"Employee {employee_id} deactivated")
+        # Delete the employee record
+        conn.execute(
+            "DELETE FROM employees WHERE id = ?",
+            (employee_id,)
+        )
+    logger.info(f"Employee {employee_id} permanently deleted")
 
 
 # ==================== Attendance Operations ====================
