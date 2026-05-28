@@ -1,14 +1,16 @@
 import { BrowserRouter as Router, Routes, Route, NavLink, useLocation } from 'react-router-dom';
-import { Wifi, Users, Clock, BarChart3, LayoutDashboard, Activity } from 'lucide-react';
+import { Wifi, Users, Clock, BarChart3, LayoutDashboard, Activity, Monitor } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Employees from './pages/Employees';
 import Attendance from './pages/Attendance';
 import Reports from './pages/Reports';
+import ActivityPage from './pages/Activity';
 
 function Sidebar() {
   const location = useLocation();
   const navItems = [
     { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
+    { to: '/activity', icon: Monitor, label: 'Activity' },
     { to: '/employees', icon: Users, label: 'Employees' },
     { to: '/attendance', icon: Clock, label: 'Attendance' },
     { to: '/reports', icon: BarChart3, label: 'Reports' },
@@ -70,6 +72,7 @@ function App() {
         <main className="ml-64 p-8 min-h-screen">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/activity" element={<ActivityPage />} />
             <Route path="/employees" element={<Employees />} />
             <Route path="/attendance" element={<Attendance />} />
             <Route path="/reports" element={<Reports />} />

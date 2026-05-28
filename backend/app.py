@@ -13,7 +13,10 @@ from database import (
     init_db, add_employee, get_all_employees, get_employee_by_id,
     get_currently_present, get_today_attendance, get_attendance_by_date,
     get_attendance_by_date_range, get_weekly_summary, get_monthly_summary,
-    delete_employee, update_employee, clock_in, clock_out, get_scan_stats
+    delete_employee, update_employee, clock_in, clock_out, get_scan_stats,
+    get_registered_macs, save_activity_report, save_screenshot,
+    get_employee_activity_today, get_all_activity_today,
+    get_employee_screenshots, get_screenshot_by_id, get_activity_timeline
 )
 
 # Configure logging
@@ -294,6 +297,103 @@ def monthly_summary():
 
     summary = get_monthly_summary(year, month)
     return jsonify({"summary": summary, "year": year, "month": month})
+
+
+# ==================== Activity Monitoring Endpoints ====================
+
+@app.route("/api/activity/report", methods=["POST"])
+def receive_activity_report():
+    """Receive activity report from employee's monitoring agent."""
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    mac_address = (data.get("mac_address") or "").strip().lower()
+    if not mac_address:
+        return jsonify({"error": "mac_address required"}), 400
+
+    # Find employee by MAC
+    registered = get_registered_macs()
+    employee_id = registered.get(mac_address)
+    if not employee_id:
+        return jsonify({"error": "Unregistered device"}), 403
+
+    save_activity_report(employee_id, data)
+    return jsonify({"status": "received"}), 200
+
+
+@app.route("/api/activity/screenshot", methods=["POST"])
+def receive_screenshot():
+    """Receive screenshot from monitoring agent."""
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    mac_address = (data.get("mac_address") or "").strip().lower()
+    screenshot = data.get("screenshot")
+    timestamp = data.get("timestamp", datetime.now().isoformat())
+
+    if not mac_address or not screenshot:
+        return jsonify({"error": "mac_address and screenshot required"}), 400
+
+    registered = get_registered_macs()
+    employee_id = registered.get(mac_address)
+    if not employee_id:
+        return jsonify({"error": "Unregistered device"}), 403
+
+    save_screenshot(employee_id, screenshot, timestamp)
+    return jsonify({"status": "saved"}), 200
+
+
+@app.route("/api/activity/today", methods=["GET"])
+def activity_today():
+    """Get today's activity for all employees."""
+    data = get_all_activity_today()
+    return jsonify({"activity": data})
+
+
+@app.route("/api/activity/employee/<int:employee_id>", methods=["GET"])
+def employee_activity(employee_id):
+    """Get detailed activity for a specific employee today."""
+    emp = get_employee_by_id(employee_id)
+    if not emp:
+        return jsonify({"error": "Employee not found"}), 404
+
+    activity = get_employee_activity_today(employee_id)
+    activity['employee'] = emp
+    return jsonify(activity)
+
+
+@app.route("/api/activity/timeline/<int:employee_id>", methods=["GET"])
+def employee_timeline(employee_id):
+    """Get minute-by-minute activity timeline for an employee."""
+    emp = get_employee_by_id(employee_id)
+    if not emp:
+        return jsonify({"error": "Employee not found"}), 404
+
+    date = request.args.get("date")
+    timeline = get_activity_timeline(employee_id, date)
+    return jsonify({"timeline": timeline, "employee": emp})
+
+
+@app.route("/api/activity/screenshots/<int:employee_id>", methods=["GET"])
+def employee_screenshots(employee_id):
+    """Get list of recent screenshots for an employee."""
+    emp = get_employee_by_id(employee_id)
+    if not emp:
+        return jsonify({"error": "Employee not found"}), 404
+
+    screenshots = get_employee_screenshots(employee_id)
+    return jsonify({"screenshots": screenshots, "employee": emp})
+
+
+@app.route("/api/activity/screenshot/<int:screenshot_id>", methods=["GET"])
+def get_single_screenshot(screenshot_id):
+    """Get a single screenshot image data."""
+    ss = get_screenshot_by_id(screenshot_id)
+    if not ss:
+        return jsonify({"error": "Screenshot not found"}), 404
+    return jsonify(ss)
 
 
 # ==================== Application Startup ====================

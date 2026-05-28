@@ -21,4 +21,11 @@ export const clockOut = (id) => api.post(`/attendance/clockout/${id}`);
 export const getWeeklySummary = () => api.get('/summary/weekly');
 export const getMonthlySummary = (year, month) => api.get(`/summary/monthly?year=${year}&month=${month}`);
 
+// Activity Monitoring
+export const getActivityToday = () => api.get('/activity/today');
+export const getEmployeeActivity = (id) => api.get(`/activity/employee/${id}`);
+export const getActivityTimeline = (id, date) => api.get(`/activity/timeline/${id}${date ? '?date=' + date : ''}`);
+export const getEmployeeScreenshots = (id) => api.get(`/activity/screenshots/${id}`);
+export const getScreenshot = (id) => api.get(`/activity/screenshot/${id}`);
+
 export default api;
