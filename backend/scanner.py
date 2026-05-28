@@ -1,7 +1,12 @@
 """
-Network Scanner for Employee Tracking System
-Scans the local network for registered MAC addresses using ARP.
-Runs as a background service with configurable intervals.
+Production Network Scanner for Employee Tracking System.
+
+Scans the office Wi-Fi network using ARP to detect registered employee devices.
+Implements a state machine for each employee:
+  ABSENT -> DETECTED (clock in) -> ABSENT (clock out after idle threshold)
+
+Supports: Windows, Linux, macOS
+Requires: Administrator/root privileges for ARP scanning
 """
 
 import time
@@ -9,195 +14,361 @@ import subprocess
 import re
 import platform
 import logging
+import threading
 from datetime import datetime
-from config import SCAN_INTERVAL, IDLE_THRESHOLD, NETWORK_SUBNET
+from config import SCAN_INTERVAL_SECONDS, IDLE_THRESHOLD_MINUTES, NETWORK_SUBNET, LOG_FILE, LOG_LEVEL
 from database import (
-    get_registered_macs, clock_in, clock_out,
-    get_currently_present, log_scan, init_db
+    get_registered_macs, clock_in, clock_out, log_scan, init_db
 )
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     handlers=[
-        logging.FileHandler('scanner.log'),
+        logging.FileHandler(LOG_FILE),
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger(__name__)
-
-# Track when employees were last seen (to handle idle threshold)
-last_seen = {}  # mac_address -> datetime
+logger = logging.getLogger("scanner")
 
 
-def scan_network_arp():
+class EmployeeState:
+    """Tracks the connection state of each registered employee."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        # mac_address -> {"last_seen": datetime, "is_present": bool}
+        self._states = {}
+
+    def mark_seen(self, mac_address):
+        """Mark an employee's device as seen on the network."""
+        with self._lock:
+            self._states[mac_address] = {
+                "last_seen": datetime.now(),
+                "is_present": True
+            }
+
+    def get_state(self, mac_address):
+        """Get current state of an employee's device."""
+        with self._lock:
+            return self._states.get(mac_address)
+
+    def mark_absent(self, mac_address):
+        """Mark employee as absent (left office)."""
+        with self._lock:
+            if mac_address in self._states:
+                self._states[mac_address]["is_present"] = False
+
+    def is_idle(self, mac_address, threshold_minutes):
+        """Check if employee has been unseen longer than threshold."""
+        with self._lock:
+            state = self._states.get(mac_address)
+            if not state or not state["is_present"]:
+                return False
+            elapsed = (datetime.now() - state["last_seen"]).total_seconds() / 60.0
+            return elapsed >= threshold_minutes
+
+    def is_present(self, mac_address):
+        """Check if employee is currently marked as present."""
+        with self._lock:
+            state = self._states.get(mac_address)
+            return state["is_present"] if state else False
+
+
+# Global state tracker
+employee_states = EmployeeState()
+
+
+def scan_network():
     """
-    Scan the local network using ARP to discover connected devices.
-    Returns a set of MAC addresses found on the network.
+    Perform ARP scan of the local network.
+    Returns a set of MAC addresses currently connected to the network.
+    Cross-platform: Windows, Linux, macOS.
     """
     detected_macs = set()
     system = platform.system()
+    start_time = time.time()
 
     try:
-        if system == "Linux":
-            # Use arp-scan if available, fall back to arping/nmap
-            try:
-                result = subprocess.run(
-                    ["arp-scan", "--localnet", "--quiet"],
-                    capture_output=True, text=True, timeout=30
-                )
-                if result.returncode == 0:
-                    mac_pattern = re.compile(r'([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})')
-                    for line in result.stdout.split('\n'):
-                        match = mac_pattern.search(line)
-                        if match:
-                            detected_macs.add(match.group(1).lower())
-                    return detected_macs
-            except FileNotFoundError:
-                pass
-
-            # Fallback: use ping sweep + arp table
-            subnet_base = NETWORK_SUBNET.rsplit('.', 1)[0]
-            for i in range(1, 255):
-                ip = f"{subnet_base}.{i}"
-                subprocess.Popen(
-                    ["ping", "-c", "1", "-W", "1", ip],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-
-            time.sleep(3)  # Wait for pings to complete
-
-            # Read ARP table
-            result = subprocess.run(
-                ["arp", "-an"],
-                capture_output=True, text=True, timeout=10
-            )
-            mac_pattern = re.compile(r'([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})')
-            for line in result.stdout.split('\n'):
-                match = mac_pattern.search(line)
-                if match:
-                    detected_macs.add(match.group(1).lower())
-
-        elif system == "Windows":
-            # Ping sweep
-            subnet_base = NETWORK_SUBNET.rsplit('.', 1)[0]
-            for i in range(1, 255):
-                ip = f"{subnet_base}.{i}"
-                subprocess.Popen(
-                    ["ping", "-n", "1", "-w", "1000", ip],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-
-            time.sleep(5)
-
-            # Read ARP table
-            result = subprocess.run(
-                ["arp", "-a"],
-                capture_output=True, text=True, timeout=10
-            )
-            mac_pattern = re.compile(r'([0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2})')
-            for line in result.stdout.split('\n'):
-                match = mac_pattern.search(line)
-                if match:
-                    # Convert Windows format (xx-xx-xx-xx-xx-xx) to standard (xx:xx:xx:xx:xx:xx)
-                    mac = match.group(1).replace('-', ':').lower()
-                    detected_macs.add(mac)
-
-        elif system == "Darwin":  # macOS
-            # Ping sweep
-            subnet_base = NETWORK_SUBNET.rsplit('.', 1)[0]
-            for i in range(1, 255):
-                ip = f"{subnet_base}.{i}"
-                subprocess.Popen(
-                    ["ping", "-c", "1", "-W", "1", ip],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-
-            time.sleep(3)
-
-            # Read ARP table
-            result = subprocess.run(
-                ["arp", "-an"],
-                capture_output=True, text=True, timeout=10
-            )
-            mac_pattern = re.compile(r'([0-9a-fA-F]{1,2}:[0-9a-fA-F]{1,2}:[0-9a-fA-F]{1,2}:[0-9a-fA-F]{1,2}:[0-9a-fA-F]{1,2}:[0-9a-fA-F]{1,2})')
-            for line in result.stdout.split('\n'):
-                match = mac_pattern.search(line)
-                if match:
-                    # Normalize MAC to two-digit hex
-                    parts = match.group(1).split(':')
-                    mac = ':'.join(p.zfill(2) for p in parts).lower()
-                    detected_macs.add(mac)
+        if system == "Windows":
+            detected_macs = _scan_windows()
+        elif system == "Linux":
+            detected_macs = _scan_linux()
+        elif system == "Darwin":
+            detected_macs = _scan_macos()
+        else:
+            logger.error(f"Unsupported platform: {system}")
 
     except Exception as e:
-        logger.error(f"Error during network scan: {e}")
+        logger.error(f"Network scan failed: {e}", exc_info=True)
 
-    return detected_macs
+    scan_duration = int((time.time() - start_time) * 1000)
+    logger.debug(f"Scan completed in {scan_duration}ms, found {len(detected_macs)} devices")
+    return detected_macs, scan_duration
 
 
-def process_scan_results(detected_macs):
+def _scan_windows():
+    """ARP scan for Windows using arp -a."""
+    detected = set()
+
+    # Step 1: Ping sweep to populate ARP table
+    subnet_base = NETWORK_SUBNET.rsplit('.', 1)[0]
+    logger.debug(f"Ping sweep on {subnet_base}.1-254 ...")
+
+    # Batch ping using a single subprocess for speed
+    # Use PowerShell for parallel pinging
+    try:
+        ps_cmd = (
+            f'1..254 | ForEach-Object -Parallel {{ '
+            f'Test-Connection -ComputerName "{subnet_base}.$_" -Count 1 -TimeoutSeconds 1 -Quiet '
+            f'}} -ThrottleLimit 50'
+        )
+        subprocess.run(
+            ["powershell", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=60
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        # Fallback: sequential ping (slower but always works)
+        logger.debug("PowerShell parallel ping unavailable, using sequential ping")
+        processes = []
+        for i in range(1, 255):
+            ip = f"{subnet_base}.{i}"
+            p = subprocess.Popen(
+                ["ping", "-n", "1", "-w", "500", ip],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            processes.append(p)
+            # Batch: wait after every 50
+            if len(processes) >= 50:
+                for proc in processes:
+                    proc.wait()
+                processes = []
+        for proc in processes:
+            proc.wait()
+
+    time.sleep(2)
+
+    # Step 2: Read ARP table
+    result = subprocess.run(
+        ["arp", "-a"],
+        capture_output=True, text=True, timeout=10
+    )
+
+    # Windows ARP format: xx-xx-xx-xx-xx-xx
+    mac_pattern = re.compile(
+        r'([0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2})'
+    )
+
+    for line in result.stdout.split('\n'):
+        # Skip broadcast and multicast
+        if 'ff-ff-ff-ff-ff-ff' in line.lower():
+            continue
+        match = mac_pattern.search(line)
+        if match:
+            mac = match.group(1).replace('-', ':').lower()
+            detected.add(mac)
+
+    return detected
+
+
+def _scan_linux():
+    """ARP scan for Linux. Tries arp-scan first, falls back to ping + arp."""
+    detected = set()
+
+    # Try arp-scan (fastest and most reliable)
+    try:
+        result = subprocess.run(
+            ["arp-scan", "--localnet", "--quiet", "--retry=2"],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0:
+            mac_pattern = re.compile(
+                r'([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})'
+            )
+            for line in result.stdout.split('\n'):
+                match = mac_pattern.search(line)
+                if match:
+                    detected.add(match.group(1).lower())
+            return detected
+    except FileNotFoundError:
+        logger.debug("arp-scan not available, falling back to ping + arp")
+
+    # Fallback: ping sweep + arp table
+    subnet_base = NETWORK_SUBNET.rsplit('.', 1)[0]
+    processes = []
+    for i in range(1, 255):
+        ip = f"{subnet_base}.{i}"
+        p = subprocess.Popen(
+            ["ping", "-c", "1", "-W", "1", ip],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        processes.append(p)
+        if len(processes) >= 50:
+            for proc in processes:
+                proc.wait()
+            processes = []
+    for proc in processes:
+        proc.wait()
+
+    time.sleep(2)
+
+    result = subprocess.run(
+        ["arp", "-an"],
+        capture_output=True, text=True, timeout=10
+    )
+    mac_pattern = re.compile(
+        r'([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})'
+    )
+    for line in result.stdout.split('\n'):
+        if 'ff:ff:ff:ff:ff:ff' in line.lower():
+            continue
+        match = mac_pattern.search(line)
+        if match:
+            detected.add(match.group(1).lower())
+
+    return detected
+
+
+def _scan_macos():
+    """ARP scan for macOS."""
+    detected = set()
+
+    subnet_base = NETWORK_SUBNET.rsplit('.', 1)[0]
+    processes = []
+    for i in range(1, 255):
+        ip = f"{subnet_base}.{i}"
+        p = subprocess.Popen(
+            ["ping", "-c", "1", "-W", "1", ip],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        processes.append(p)
+        if len(processes) >= 50:
+            for proc in processes:
+                proc.wait()
+            processes = []
+    for proc in processes:
+        proc.wait()
+
+    time.sleep(2)
+
+    result = subprocess.run(
+        ["arp", "-an"],
+        capture_output=True, text=True, timeout=10
+    )
+    mac_pattern = re.compile(
+        r'([0-9a-fA-F]{1,2}:[0-9a-fA-F]{1,2}:[0-9a-fA-F]{1,2}:[0-9a-fA-F]{1,2}:[0-9a-fA-F]{1,2}:[0-9a-fA-F]{1,2})'
+    )
+    for line in result.stdout.split('\n'):
+        if 'ff:ff:ff:ff:ff:ff' in line.lower():
+            continue
+        match = mac_pattern.search(line)
+        if match:
+            parts = match.group(1).split(':')
+            mac = ':'.join(p.zfill(2) for p in parts).lower()
+            detected.add(mac)
+
+    return detected
+
+
+def process_scan_results(detected_macs, scan_duration_ms):
     """
-    Process the scan results: clock in/out employees based on detection.
+    Core logic: Compare detected MACs against registered employees.
+    Clock in newly detected, clock out those idle beyond threshold.
     """
-    global last_seen
-
     registered_macs = get_registered_macs()
-    now = datetime.now()
+
+    if not registered_macs:
+        logger.warning("No employees registered. Add employees via the dashboard first.")
+        log_scan(len(detected_macs), 0, scan_duration_ms)
+        return 0
+
     employees_detected = 0
 
-    # Check which registered employees are currently on the network
     for mac, employee_id in registered_macs.items():
         if mac in detected_macs:
-            # Employee is present
+            # Device is on the network
             employees_detected += 1
-            last_seen[mac] = now
+            was_present = employee_states.is_present(mac)
+            employee_states.mark_seen(mac)
 
-            # Try to clock them in (will skip if already clocked in)
-            if clock_in(employee_id):
-                logger.info(f"Employee {employee_id} (MAC: {mac}) clocked IN at {now.strftime('%H:%M:%S')}")
+            if not was_present:
+                # New arrival - clock them in
+                if clock_in(employee_id, auto_detected=True):
+                    logger.info(f"CLOCK IN: Employee #{employee_id} (MAC: {mac}) detected on network")
+
         else:
-            # Employee not detected - check idle threshold
-            if mac in last_seen:
-                minutes_since_seen = (now - last_seen[mac]).total_seconds() / 60.0
-                if minutes_since_seen >= IDLE_THRESHOLD:
-                    # Employee has been gone long enough - clock them out
-                    if clock_out(employee_id):
-                        logger.info(f"Employee {employee_id} (MAC: {mac}) clocked OUT at {now.strftime('%H:%M:%S')} (idle for {minutes_since_seen:.0f} min)")
-                    del last_seen[mac]
+            # Device NOT on the network
+            if employee_states.is_idle(mac, IDLE_THRESHOLD_MINUTES):
+                # Gone beyond threshold - clock out
+                if clock_out(employee_id, auto_detected=True):
+                    logger.info(
+                        f"CLOCK OUT: Employee #{employee_id} (MAC: {mac}) "
+                        f"absent for >{IDLE_THRESHOLD_MINUTES} minutes"
+                    )
+                employee_states.mark_absent(mac)
 
-    # Log the scan
-    log_scan(len(detected_macs), employees_detected)
-    logger.info(f"Scan complete: {len(detected_macs)} devices found, {employees_detected} employees detected")
+    # Log scan event
+    log_scan(len(detected_macs), employees_detected, scan_duration_ms)
 
+    logger.info(
+        f"Scan result: {len(detected_macs)} devices on network, "
+        f"{employees_detected}/{len(registered_macs)} employees detected"
+    )
     return employees_detected
 
 
 def run_scanner():
-    """Main scanner loop."""
+    """Main scanner loop. Runs continuously until stopped."""
     logger.info("=" * 60)
-    logger.info("Employee Tracking System - Network Scanner Started")
-    logger.info(f"Scanning subnet: {NETWORK_SUBNET}")
-    logger.info(f"Scan interval: {SCAN_INTERVAL} seconds")
-    logger.info(f"Idle threshold: {IDLE_THRESHOLD} minutes")
+    logger.info("PRODUCTION SCANNER STARTED")
+    logger.info(f"  Platform:       {platform.system()} {platform.release()}")
+    logger.info(f"  Subnet:         {NETWORK_SUBNET}")
+    logger.info(f"  Scan interval:  {SCAN_INTERVAL_SECONDS}s ({SCAN_INTERVAL_SECONDS // 60} min)")
+    logger.info(f"  Idle threshold: {IDLE_THRESHOLD_MINUTES} min")
     logger.info("=" * 60)
 
-    # Initialize database
+    # Initialize database on start
     init_db()
+
+    # Check if any employees are registered
+    registered = get_registered_macs()
+    if not registered:
+        logger.warning("")
+        logger.warning("  NO EMPLOYEES REGISTERED!")
+        logger.warning("  Add employees via the web dashboard first.")
+        logger.warning("  The scanner will keep running and check again each cycle.")
+        logger.warning("")
+
+    scan_count = 0
+    consecutive_errors = 0
 
     while True:
         try:
-            logger.info(f"Starting network scan at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            detected_macs = scan_network_arp()
-            process_scan_results(detected_macs)
-        except Exception as e:
-            logger.error(f"Error in scan cycle: {e}")
+            scan_count += 1
+            logger.info(f"--- Scan #{scan_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---")
 
-        logger.info(f"Next scan in {SCAN_INTERVAL} seconds...")
-        time.sleep(SCAN_INTERVAL)
+            detected_macs, scan_duration = scan_network()
+            process_scan_results(detected_macs, scan_duration)
+
+            consecutive_errors = 0  # Reset on success
+
+        except Exception as e:
+            consecutive_errors += 1
+            logger.error(f"Scan #{scan_count} FAILED (error #{consecutive_errors}): {e}", exc_info=True)
+
+            # Back off if repeated failures
+            if consecutive_errors >= 5:
+                backoff = min(consecutive_errors * 30, 300)
+                logger.warning(f"Multiple failures. Backing off for {backoff}s before retry...")
+                time.sleep(backoff)
+
+        # Wait for next scan cycle
+        logger.debug(f"Sleeping {SCAN_INTERVAL_SECONDS}s until next scan...")
+        time.sleep(SCAN_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":

@@ -1,73 +1,116 @@
-# Employee Tracking System
+# Employee Tracking System (Production)
 
-A Wi-Fi based employee presence tracking system that detects when employees are in the office by monitoring their device connections to the office network.
+Live Wi-Fi based attendance tracking. Detects employee devices on the office network and automatically logs check-in/check-out times.
+
+**No dummy data. No fake entries. Register your real employees and start tracking.**
+
+## How It Works
+
+```
+Employee opens laptop → Connects to office Wi-Fi
+         ↓
+Scanner detects MAC address on network (every 5 min)
+         ↓
+System logs: "Checked In at 09:02 AM"
+         ↓
+Laptop disconnects (leaves / closes lid)
+         ↓
+After 15 min idle → System logs: "Checked Out at 05:45 PM"
+```
+
+## Setup (Windows)
+
+### 1. Install Prerequisites
+- Python 3.8+ → https://www.python.org/downloads/
+- Node.js 20+ → https://nodejs.org/
+
+### 2. Install Dependencies
+```powershell
+cd backend
+pip install -r requirements.txt
+
+cd ..\frontend
+npm install
+```
+
+### 3. Configure Network (Important!)
+Edit `backend/.env`:
+```
+NETWORK_SUBNET=192.168.1.0/24    ← Change to YOUR office subnet
+SCAN_INTERVAL_SECONDS=300         ← Scan every 5 minutes
+IDLE_THRESHOLD_MINUTES=15         ← Mark as left after 15 min
+```
+
+### 4. Start the System
+```powershell
+# Terminal 1: API Server
+cd backend
+python app.py
+
+# Terminal 2: Dashboard
+cd frontend
+npm run dev
+
+# Terminal 3: Scanner (Run as Administrator!)
+cd backend
+python scanner.py
+```
+
+### 5. Register Employees
+1. Open http://localhost:5173
+2. Go to **Employees** tab
+3. Click **Register Employee**
+4. Enter name + their laptop's MAC address
+5. Done! The scanner will track them automatically.
+
+## Finding MAC Addresses
+
+| OS | Command |
+|----|---------|
+| Windows | `ipconfig /all` → Wi-Fi "Physical Address" |
+| macOS | System Settings → Network → Wi-Fi → Details → MAC Address |
+| Linux | `ip link show` → wlan0 link/ether |
+
+Format: `a4:83:e7:2b:1f:00` (lowercase, colons)
 
 ## Architecture
 
 ```
-[Employee Laptop] ──> Connects to Office Wi-Fi
-                              │
-        ┌─────────────────────┴─────────────────────┐
-        ▼                                           ▼
-[Network Scanner]                           [SQLite Database]
-  (Python script)                         (Attendance logs)
-  Scans every 5 min                              │
-        │                                        ▼
-        └──────────> [Flask API Server] ──> [React Dashboard]
+backend/
+├── app.py          ← Flask API server
+├── scanner.py      ← Network scanner (ARP)
+├── database.py     ← SQLite operations
+├── config.py       ← Loads from .env
+├── .env            ← Your configuration
+└── data/           ← Database file (auto-created)
+
+frontend/
+├── src/pages/
+│   ├── Dashboard.jsx   ← Live presence view
+│   ├── Employees.jsx   ← Register/manage employees
+│   ├── Attendance.jsx  ← Daily records + manual override
+│   └── Reports.jsx     ← Weekly/monthly hours
+└── ...
 ```
 
-## Components
+## API Endpoints
 
-1. **Network Scanner** (`backend/scanner.py`) - Python script that scans the local network for registered MAC addresses
-2. **API Server** (`backend/app.py`) - Flask REST API serving attendance data
-3. **Database** (`backend/database.db`) - SQLite database storing employees and attendance logs
-4. **Dashboard** (`frontend/`) - React + Tailwind CSS web dashboard for HR
-
-## Quick Start
-
-### Backend Setup
-
-```bash
-cd backend
-pip install -r requirements.txt
-python setup_db.py          # Initialize database with sample employees
-python app.py               # Start API server (port 5000)
-python scanner.py           # Start network scanner (run separately)
-```
-
-### Frontend Setup
-
-```bash
-cd frontend
-npm install
-npm run dev                 # Start dev server (port 5173)
-```
-
-## Configuration
-
-Edit `backend/config.py` to set:
-- `SCAN_INTERVAL` - How often to scan (default: 300 seconds / 5 minutes)
-- `IDLE_THRESHOLD` - Minutes before marking as "left" (default: 15 minutes)
-- `NETWORK_SUBNET` - Your office network subnet (default: 192.168.1.0/24)
-
-## How It Works
-
-1. Each employee's device MAC address is registered in the system
-2. The scanner pings the local network every 5 minutes using ARP scanning
-3. When a registered MAC is detected, the employee is marked as "Checked In"
-4. If the MAC disappears for more than 15 minutes, they are marked as "Checked Out"
-5. The dashboard shows real-time presence and historical attendance data
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /api/health | System + scanner status |
+| GET | /api/stats | Dashboard overview |
+| GET/POST | /api/employees | List / Register employees |
+| PUT/DELETE | /api/employees/:id | Update / Remove |
+| GET | /api/attendance/present | Who is in office NOW |
+| GET | /api/attendance/today | Today's full log |
+| POST | /api/attendance/clockin/:id | Manual clock in |
+| POST | /api/attendance/clockout/:id | Manual clock out |
+| GET | /api/summary/weekly | This week's hours |
+| GET | /api/summary/monthly | Monthly hours |
 
 ## Privacy
 
-- Only tracks network presence (connected/disconnected)
-- Does NOT monitor browsing activity, files, or any device content
-- Only works within the office network
-- Employees are fully aware of the system
-
-## Requirements
-
-- Python 3.8+
-- Node.js 16+
-- Office Wi-Fi network access
-- One always-on computer to run the scanner
+- Only detects if device is connected (yes/no)
+- Cannot see browsing, files, or activity
+- Only works inside office network
+- Employees should be informed

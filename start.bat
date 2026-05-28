@@ -1,65 +1,58 @@
 @echo off
-REM Employee Tracking System - Windows Quick Start Script
+REM Employee Tracking System - Windows Production Start
+REM Run this as Administrator for scanner to work
 
 echo =============================================
-echo   Employee Tracking System - Setup ^& Start
+echo   Employee Tracking System - Production
 echo =============================================
 echo.
 
-REM Check Python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ERROR: Python is required but not installed.
-    echo Download from https://www.python.org/downloads/
+    echo ERROR: Python not found. Install from https://www.python.org/downloads/
     pause
     exit /b 1
 )
 
-REM Check Node.js
 node --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ERROR: Node.js is required but not installed.
-    echo Download from https://nodejs.org/
+    echo ERROR: Node.js not found. Install from https://nodejs.org/
     pause
     exit /b 1
 )
 
-echo [1/5] Installing Python dependencies...
+echo [1/3] Installing backend dependencies...
 cd backend
 pip install -r requirements.txt --quiet
 echo   Done.
-
-echo [2/5] Setting up database with sample employees...
-python setup_db.py
 echo.
 
-echo [3/5] Generating sample attendance data...
-python simulate_data.py
-echo.
-
-echo [4/5] Installing frontend dependencies...
+echo [2/3] Installing frontend dependencies...
 cd ..\frontend
 call npm install --silent
 echo   Done.
 echo.
 
-echo [5/5] Starting services...
+echo [3/3] Starting services...
 echo.
 
-echo Starting API server on http://localhost:5000 ...
 cd ..\backend
-start "API Server" cmd /k python app.py
+start "Employee Tracker - API" cmd /k "python app.py"
+echo   API server started: http://localhost:5000
 
-echo Starting frontend on http://localhost:5173 ...
 cd ..\frontend
-start "Frontend" cmd /k npm run dev
+start "Employee Tracker - Dashboard" cmd /k "npm run dev"
+echo   Dashboard started: http://localhost:5173
 
 echo.
 echo =============================================
-echo   All services running!
-echo   Dashboard:  http://localhost:5173
-echo   API:        http://localhost:5000
-echo =============================================
+echo   RUNNING! Open http://localhost:5173
 echo.
-echo Close the opened terminal windows to stop services.
+echo   NEXT STEPS:
+echo   1. Go to Employees tab
+echo   2. Register each employee with their MAC address
+echo   3. Open a NEW Admin CMD and run:
+echo      cd backend
+echo      python scanner.py
+echo =============================================
 pause

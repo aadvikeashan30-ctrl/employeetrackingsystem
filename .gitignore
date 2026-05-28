@@ -1,37 +1,27 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-*.egg-info/
-dist/
-build/
 venv/
 env/
-.env
 
-# Database
+# Database (production data - do not commit)
+backend/data/
 *.db
-*.sqlite3
-backend/database.db
 
 # Logs
+backend/logs/
 *.log
-scanner.log
+
+# Environment (contains secrets)
+backend/.env
 
 # Node
 node_modules/
-frontend/node_modules/
-
-# Build outputs
 frontend/dist/
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
 
 # OS
 .DS_Store
