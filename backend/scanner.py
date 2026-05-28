@@ -109,66 +109,83 @@ def scan_network():
 
 
 def _scan_windows():
-    """ARP scan for Windows using arp -a."""
+    """
+    ARP scan for Windows.
+    Uses multiple methods to maximize device detection:
+    1. Ping sweep all IPs (populates ARP cache)
+    2. Read ARP table
+    3. Also try 'netsh' for neighbor discovery
+    """
     detected = set()
-
-    # Step 1: Ping sweep to populate ARP table
     subnet_base = NETWORK_SUBNET.rsplit('.', 1)[0]
+
+    # Step 1: Aggressive ping sweep to populate ARP table
     logger.debug(f"Ping sweep on {subnet_base}.1-254 ...")
+    processes = []
+    for i in range(1, 255):
+        ip = f"{subnet_base}.{i}"
+        p = subprocess.Popen(
+            ["ping", "-n", "1", "-w", "1000", ip],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        processes.append(p)
+        # Batch: wait after every 30 to avoid overwhelming
+        if len(processes) >= 30:
+            for proc in processes:
+                proc.wait()
+            processes = []
+    for proc in processes:
+        proc.wait()
 
-    # Batch ping using a single subprocess for speed
-    # Use PowerShell for parallel pinging
+    # Wait for ARP table to fully populate
+    time.sleep(3)
+
+    # Step 2: Read ARP table using 'arp -a'
     try:
-        ps_cmd = (
-            f'1..254 | ForEach-Object -Parallel {{ '
-            f'Test-Connection -ComputerName "{subnet_base}.$_" -Count 1 -TimeoutSeconds 1 -Quiet '
-            f'}} -ThrottleLimit 50'
+        result = subprocess.run(
+            ["arp", "-a"],
+            capture_output=True, text=True, timeout=10
         )
-        subprocess.run(
-            ["powershell", "-Command", ps_cmd],
-            capture_output=True, text=True, timeout=60
+        mac_pattern = re.compile(
+            r'([0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2})'
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        # Fallback: sequential ping (slower but always works)
-        logger.debug("PowerShell parallel ping unavailable, using sequential ping")
-        processes = []
-        for i in range(1, 255):
-            ip = f"{subnet_base}.{i}"
-            p = subprocess.Popen(
-                ["ping", "-n", "1", "-w", "500", ip],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            processes.append(p)
-            # Batch: wait after every 50
-            if len(processes) >= 50:
-                for proc in processes:
-                    proc.wait()
-                processes = []
-        for proc in processes:
-            proc.wait()
+        for line in result.stdout.split('\n'):
+            if 'ff-ff-ff-ff-ff-ff' in line.lower():
+                continue
+            # Skip multicast (01-xx-xx)
+            if line.strip().startswith('01-'):
+                continue
+            match = mac_pattern.search(line)
+            if match:
+                mac = match.group(1).replace('-', ':').lower()
+                detected.add(mac)
+    except Exception as e:
+        logger.error(f"arp -a failed: {e}")
 
-    time.sleep(2)
+    # Step 3: Also try 'netsh' to get neighbor table (catches more devices)
+    try:
+        result = subprocess.run(
+            ["netsh", "interface", "ipv4", "show", "neighbors"],
+            capture_output=True, text=True, timeout=10
+        )
+        mac_pattern = re.compile(
+            r'([0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2})'
+        )
+        for line in result.stdout.split('\n'):
+            if 'ff-ff-ff-ff-ff-ff' in line.lower():
+                continue
+            match = mac_pattern.search(line)
+            if match:
+                mac = match.group(1).replace('-', ':').lower()
+                detected.add(mac)
+    except Exception as e:
+        logger.debug(f"netsh neighbors failed: {e}")
 
-    # Step 2: Read ARP table
-    result = subprocess.run(
-        ["arp", "-a"],
-        capture_output=True, text=True, timeout=10
-    )
-
-    # Windows ARP format: xx-xx-xx-xx-xx-xx
-    mac_pattern = re.compile(
-        r'([0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2}-[0-9a-fA-F]{2})'
-    )
-
-    for line in result.stdout.split('\n'):
-        # Skip broadcast and multicast
-        if 'ff-ff-ff-ff-ff-ff' in line.lower():
-            continue
-        match = mac_pattern.search(line)
-        if match:
-            mac = match.group(1).replace('-', ':').lower()
-            detected.add(mac)
+    # Log all detected MACs for debugging
+    logger.info(f"All MACs detected on network ({len(detected)}):")
+    for mac in sorted(detected):
+        logger.info(f"  -> {mac}")
 
     return detected
 
@@ -285,6 +302,12 @@ def process_scan_results(detected_macs, scan_duration_ms):
         logger.warning("No employees registered. Add employees via the dashboard first.")
         log_scan(len(detected_macs), 0, scan_duration_ms)
         return 0
+
+    # Log comparison for debugging
+    logger.info(f"Registered MACs to look for:")
+    for mac, emp_id in registered_macs.items():
+        found = "FOUND" if mac in detected_macs else "NOT FOUND"
+        logger.info(f"  Employee #{emp_id}: {mac} -> {found}")
 
     employees_detected = 0
 
